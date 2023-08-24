@@ -1,11 +1,37 @@
-## My Project
+## Accelerate IPv6 adoption on AWS with Amazon VPC Lattice
 
-TODO: Fill this README out!
+This repo includes the Cloudformation template that deploys the architecture shown in Figure-1 below
 
-Be sure to:
+## PreRequisites
+The template will deploy VPCs, EC2 instances and Amazon VPC Lattice constructs into your AWS account. Ensure that you have the right IAM credentials. You can issue `aws configure` to check the AWS permissions.
 
-* Change the title in this README
-* Edit your repository description on GitHub
+## Deploying the template
+
+Isse this command to clone the repo:
+```
+git clone https://github.com/aws-samples/accelerate-ipv6-adoption-on-aws-with-amazon-vpc-lattice/
+```
+
+After that, navigate to the right directory:
+```
+cd accelerate-ipv6-adoption-on-aws-with-amazon-vpc-lattice
+```
+
+Use the following command to deploy the CloudFormation template. Please replace the correct SSHClientIP and SSHClientIPv6 addresses. These are the IP and IPv6 addresses of your SSH client machine:
+
+```
+aws cloudformation create-stack --stack-name lattice-ipv6-stack \
+--template-body file://infra.yaml \
+--parameters ParameterKey=SSHClientIP,ParameterValue=a.b.c.d/32 \
+ParameterKey=SSHClientIPv6,ParameterValue=2001:db8::1/128 \
+--capabilities CAPABILITY_NAMED_IAM
+```
+
+## Cleanup
+Use this command to delete the stack and all the resources deployed by the stack:
+```
+aws cloudformation delete-stack --stack-name lattice-ipv6-stack
+```
 
 ## Security
 
