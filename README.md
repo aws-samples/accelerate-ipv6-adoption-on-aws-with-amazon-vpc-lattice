@@ -26,6 +26,7 @@ aws cloudformation create-stack --stack-name lattice-ipv6-stack \
 ParameterKey=SSHClientIPv6,ParameterValue=2001:db8::1/128 \
 --capabilities CAPABILITY_NAMED_IAM
 ```
+Currently the instances do not have HTTPD automatically installed. After creating the stack, please log into the instances and install HTTPD.
 
 ## Cleanup
 Use this command to delete the stack and all the resources deployed by the stack:
