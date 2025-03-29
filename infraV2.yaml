@@ -1,0 +1,1460 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "VPC Infrastructure with IPv4/IPv6 Subnets, NAT Gateways, VPC Lattice, and EC2 Instances"
+
+Parameters:
+  LatestAmiId:
+    Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
+    Default: "/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2"
+    Description: "Latest Amazon Linux 2 AMI"
+  
+  SSHClientIP:
+    Type: String
+    Default: "1.1.1.1/32"
+    Description: "IPv4 CIDR for SSH access"
+    AllowedPattern: "^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}$"
+  
+  SSHClientIPv6:
+    Type: String
+    Default: "2001:db8::1:2:3/128"
+    Description: "IPv6 CIDR for SSH access"
+    AllowedPattern: "^[0-9a-fA-F:]+/[0-9]{1,3}$"
+
+Resources:
+  # ---------- VPCs and IPv6 CIDRs ----------
+  VPC1:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.1.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: default
+      Tags: 
+        - Key: Name
+          Value: vpc-1
+
+  VPC1IPv6CIDR:
+    Type: AWS::EC2::VPCCidrBlock
+    Properties:
+      AmazonProvidedIpv6CidrBlock: true
+      VpcId: !Ref VPC1
+
+  VPC2:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.2.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: default
+      Tags: 
+        - Key: Name
+          Value: vpc-2
+
+  VPC2IPv6CIDR:
+    Type: AWS::EC2::VPCCidrBlock
+    Properties:
+      AmazonProvidedIpv6CidrBlock: true
+      VpcId: !Ref VPC2
+
+  # ---------- Internet Gateways and Attachments ----------
+  VPC1IGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: VPC1-IGW
+
+  VPC2IGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: VPC2-IGW
+
+  VPC1IGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC1
+      InternetGatewayId: !Ref VPC1IGW
+
+  VPC2IGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC2
+      InternetGatewayId: !Ref VPC2IGW
+
+  # ---------- Egress-Only Internet Gateways ----------
+  VPC1EIGW:
+    Type: AWS::EC2::EgressOnlyInternetGateway
+    Properties:
+      VpcId: !Ref VPC1
+
+  VPC2EIGW:
+    Type: AWS::EC2::EgressOnlyInternetGateway
+    Properties:
+      VpcId: !Ref VPC2
+
+  # ---------- Security Groups ----------
+  VPC1InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: vpc-1-instance-sg
+      GroupDescription: Instance Security Group for VPC1
+      VpcId: !Ref VPC1
+      SecurityGroupIngress:
+        - Description: Allow HTTP - Lattice IPv4
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 169.254.171.0/24
+        - Description: Allow HTTP - Lattice IPv4
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 29.224.0.0/17
+        - Description: Allow SSH from specified IPv4
+          IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SSHClientIP
+        - Description: Allow SSH from specified IPv6
+          IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIpv6: !Ref SSHClientIPv6
+        - Description: Allow HTTP from VPC Lattice IPv6
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIpv6: Fd00::/10
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: "-1"
+          FromPort: -1
+          ToPort: -1
+          CidrIpv6: ::/0
+      Tags:
+        - Key: Name
+          Value: VPC1-Instance-SG
+
+  VPC1EndpointsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: vpc-1-endpoints-sg
+      GroupDescription: Endpoints Security Group for VPC1
+      VpcId: !Ref VPC1
+      SecurityGroupIngress:
+        - Description: Allow HTTPS from instances
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref VPC1InstanceSecurityGroup
+        - Description: Allow HTTPS from VPC1NATGW1 Subnet CIDR
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 10.1.10.0/24
+        - Description: Allow HTTPS from VPC1NATGW2 Subnet CIDR
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 10.1.11.0/24
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: "-1"
+          FromPort: -1
+          ToPort: -1
+          CidrIpv6: ::/0
+      Tags:
+        - Key: Name
+          Value: VPC1-Endpoints-SG
+
+  VPC1LatticeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: vpc-1-lattice-sg
+      GroupDescription: VPC Lattice Security Group for VPC1
+      VpcId: !Ref VPC1
+      SecurityGroupIngress:
+        - Description: Allow HTTP from instances
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref VPC1InstanceSecurityGroup
+        - Description: Allow HTTPS from instances
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref VPC1InstanceSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: "-1"
+          FromPort: -1
+          ToPort: -1
+          CidrIpv6: ::/0
+      Tags:
+        - Key: Name
+          Value: VPC1-Lattice-SG
+
+  VPC2InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: vpc-2-instance-sg
+      GroupDescription: Instance Security Group for VPC2
+      VpcId: !Ref VPC2
+      SecurityGroupIngress:
+        - Description: Allow HTTP - Lattice IPv4
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 169.254.171.0/24
+        - Description: Allow HTTP - Lattice IPv4
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 29.224.0.0/17
+        - Description: Allow SSH from specified IPv4
+          IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SSHClientIP
+        - Description: Allow SSH from specified IPv6
+          IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIpv6: !Ref SSHClientIPv6
+        - Description: Allow HTTP from VPC Lattice IPv6
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIpv6: Fd00::/10
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: "-1"
+          FromPort: -1
+          ToPort: -1
+          CidrIpv6: ::/0
+      Tags:
+        - Key: Name
+          Value: VPC2-Instance-SG
+
+  VPC2EndpointsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: vpc-2-endpoints-sg
+      GroupDescription: Endpoints Security Group for VPC2
+      VpcId: !Ref VPC2
+      SecurityGroupIngress:
+        - Description: Allow HTTPS from instances
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref VPC2InstanceSecurityGroup
+        - Description: Allow HTTPS from VPC2NATGW1 Subnet CIDR
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 10.2.10.0/24
+        - Description: Allow HTTPS from VPC2NATGW2 Subnet CIDR
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 10.2.11.0/24
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: "-1"
+          FromPort: -1
+          ToPort: -1
+          CidrIpv6: ::/0
+      Tags:
+        - Key: Name
+          Value: VPC2-Endpoints-SG
+
+  VPC2LatticeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: vpc-2-lattice-sg
+      GroupDescription: VPC Lattice Security Group for VPC2
+      VpcId: !Ref VPC2
+      SecurityGroupIngress:
+        - Description: Allow HTTP from instances
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref VPC2InstanceSecurityGroup
+        - Description: Allow HTTPS from instances
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref VPC2InstanceSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: "-1"
+          FromPort: -1
+          ToPort: -1
+          CidrIpv6: ::/0
+      Tags:
+        - Key: Name
+          Value: VPC2-Lattice-SG
+
+  # ---------- Route Tables ----------
+  VPC1PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC1
+      Tags:
+        - Key: Name
+          Value: VPC1-Public-RT
+
+  VPC1IPv4SubnetRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC1
+      Tags:
+        - Key: Name
+          Value: VPC1-IPV4-RT-AZ1
+
+  VPC1IPv6SubnetRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC1
+      Tags:
+        - Key: Name
+          Value: VPC1-IPV6-RT-AZ2
+
+  VPC2PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC2
+      Tags:
+        - Key: Name
+          Value: VPC2-Public-RT
+
+  VPC2IPv4SubnetRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC2
+      Tags:
+        - Key: Name
+          Value: VPC2-IPV4-RT-AZ1
+
+  VPC2DualStackSubnetRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC2
+      Tags:
+        - Key: Name
+          Value: VPC2-DualStack-RT-AZ2
+
+  # ---------- Elastic IPs for NAT Gateways ----------
+  VPC1EIP1:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: VPC1-NAT-EIP1
+
+  VPC1EIP2:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: VPC1-NAT-EIP2
+
+  VPC2EIP1:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: VPC2-NAT-EIP1
+
+  VPC2EIP2:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: VPC2-NAT-EIP2
+
+  # ---------- Subnets ----------
+  # VPC1 Public Subnets
+  VPC1PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC1
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: 10.1.10.0/24
+      Ipv6CidrBlock:
+        Fn::Select: 
+          - 0
+          - Fn::Cidr: 
+            - !Select [0, !GetAtt VPC1.Ipv6CidrBlocks]
+            - 6
+            - 64
+      Tags:
+        - Key: Name
+          Value: VPC1-Public-Subnet-1
+
+  VPC1PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC1
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: 10.1.11.0/24
+      Ipv6CidrBlock:
+        Fn::Select: 
+          - 5
+          - Fn::Cidr: 
+            - !Select [0, !GetAtt VPC1.Ipv6CidrBlocks]
+            - 6
+            - 64
+      Tags:
+        - Key: Name
+          Value: VPC1-Public-Subnet-2      
+
+  # VPC1 Private Subnets
+  VPC1IPv4Subnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC1
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: 10.1.1.0/24
+      Tags:
+        - Key: Name
+          Value: vpc-1-ipv4-subnet
+
+  VPC1IPv6Subnet:
+    Type: AWS::EC2::Subnet
+    DependsOn: VPC1IPv6CIDR
+    Properties:
+      VpcId: !Ref VPC1
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Ipv6Native: true
+      EnableDns64: true
+      Ipv6CidrBlock:
+        Fn::Select: 
+          - 2
+          - Fn::Cidr: 
+            - !Select [0, !GetAtt VPC1.Ipv6CidrBlocks]
+            - 6
+            - 64
+      AssignIpv6AddressOnCreation: true
+      Tags:
+        - Key: Name
+          Value: vpc-1-ipv6-subnet
+
+  VPC1EndpointsSubnet1:
+    DependsOn: VPC1IPv6CIDR
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC1
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: 10.1.3.0/24
+      Ipv6CidrBlock:
+        Fn::Select: 
+          - 3
+          - Fn::Cidr: 
+            - !Select [0, !GetAtt VPC1.Ipv6CidrBlocks]
+            - 6
+            - 64
+      AssignIpv6AddressOnCreation: true
+      Tags:
+        - Key: Name
+          Value: vpc-1-endpoints-subnet-1
+
+  VPC1EndpointsSubnet2:
+    DependsOn: VPC1IPv6CIDR
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC1
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: 10.1.4.0/24
+      Ipv6CidrBlock:
+        Fn::Select: 
+          - 4
+          - Fn::Cidr: 
+            - !Select [0, !GetAtt VPC1.Ipv6CidrBlocks]
+            - 6
+            - 64
+      AssignIpv6AddressOnCreation: true
+      Tags:
+        - Key: Name
+          Value: vpc-1-endpoints-subnet-2
+
+  # VPC2 Public Subnets
+  VPC2PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC2
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: 10.2.10.0/24
+      Ipv6CidrBlock: 
+        Fn::Select: 
+          - 0
+          - Fn::Cidr: 
+            - !Select [0, !GetAtt VPC2.Ipv6CidrBlocks]
+            - 6
+            - 64
+      Tags:
+        - Key: Name
+          Value: VPC2-Public-Subnet-1
+
+  VPC2PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC2
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: 10.2.11.0/24
+      Ipv6CidrBlock: 
+        Fn::Select: 
+          - 5
+          - Fn::Cidr: 
+            - !Select [0, !GetAtt VPC2.Ipv6CidrBlocks]
+            - 6
+            - 64
+      Tags:
+        - Key: Name
+          Value: VPC2-Public-Subnet-2
+
+  # VPC2 Private Subnets
+  VPC2IPv4Subnet:
+    Type: AWS::EC2::Subnet
+    DependsOn: VPC2IPv6CIDR
+    Properties:
+      VpcId: !Ref VPC2
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: 10.2.1.0/24
+      Tags:
+        - Key: Name
+          Value: vpc-2-ipv4-subnet
+
+  VPC2DualStackSubnet:
+    Type: AWS::EC2::Subnet
+    DependsOn: VPC2IPv6CIDR
+    Properties:
+      VpcId: !Ref VPC2
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: 10.2.2.0/24
+      EnableDns64: true
+      Ipv6CidrBlock: 
+        Fn::Select: 
+          - 2
+          - Fn::Cidr: 
+            - !Select [0, !GetAtt VPC2.Ipv6CidrBlocks]
+            - 6
+            - 64
+      AssignIpv6AddressOnCreation: true
+      Tags:
+        - Key: Name
+          Value: VPC2-DualStack-Subnet-2
+
+  VPC2EndpointsSubnet1:
+    DependsOn:
+      - VPC2IPv6CIDR
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC2
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: 10.2.3.0/24
+      Ipv6CidrBlock: 
+        Fn::Select: 
+          - 3
+          - Fn::Cidr: 
+            - !Select [0, !GetAtt VPC2.Ipv6CidrBlocks]
+            - 6
+            - 64
+      AssignIpv6AddressOnCreation: true
+      Tags:
+        - Key: Name
+          Value: vpc-2-endpoints-subnet-1
+
+  VPC2EndpointsSubnet2:
+    DependsOn:
+      - VPC2IPv6CIDR
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC2
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: 10.2.4.0/24
+      Ipv6CidrBlock: 
+        Fn::Select: 
+          - 4
+          - Fn::Cidr: 
+            - !Select [0, !GetAtt VPC2.Ipv6CidrBlocks]
+            - 6
+            - 64
+      AssignIpv6AddressOnCreation: true
+      Tags:
+        - Key: Name
+          Value: vpc-2-endpoints-subnet-2
+
+  # ---------- NAT Gateways ----------
+  VPC1NATGW1:
+    Type: AWS::EC2::NatGateway
+    DependsOn: VPC1IGWAttachment
+    Properties:
+      AllocationId: !GetAtt VPC1EIP1.AllocationId
+      SubnetId: !Ref VPC1PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: VPC1-NATGW-AZ1
+
+  VPC1NATGW2:
+    Type: AWS::EC2::NatGateway
+    DependsOn: VPC1IGWAttachment
+    Properties:
+      AllocationId: !GetAtt VPC1EIP2.AllocationId
+      SubnetId: !Ref VPC1PublicSubnet2
+      Tags:
+        - Key: Name
+          Value: VPC1-NATGW-AZ2
+
+  VPC2NATGW1:
+    Type: AWS::EC2::NatGateway
+    DependsOn: VPC2IGWAttachment
+    Properties:
+      AllocationId: !GetAtt VPC2EIP1.AllocationId
+      SubnetId: !Ref VPC2PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: VPC2-NATGW-AZ1
+
+  VPC2NATGW2:
+    Type: AWS::EC2::NatGateway
+    DependsOn: VPC2IGWAttachment
+    Properties:
+      AllocationId: !GetAtt VPC2EIP2.AllocationId
+      SubnetId: !Ref VPC2PublicSubnet2
+      Tags:
+        - Key: Name
+          Value: VPC2-NATGW-AZ2
+
+  # ---------- Route Table Associations ----------
+  VPC1PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref VPC1PublicSubnet1
+      RouteTableId: !Ref VPC1PublicRouteTable
+
+  VPC1PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref VPC1PublicSubnet2
+      RouteTableId: !Ref VPC1PublicRouteTable
+
+  VPC1IPv4SubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref VPC1IPv4Subnet
+      RouteTableId: !Ref VPC1IPv4SubnetRouteTable1
+
+  VPC1IPv6SubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref VPC1IPv6Subnet
+      RouteTableId: !Ref VPC1IPv6SubnetRouteTable2
+
+  VPC2PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref VPC2PublicSubnet1
+      RouteTableId: !Ref VPC2PublicRouteTable
+
+  VPC2PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref VPC2PublicSubnet2
+      RouteTableId: !Ref VPC2PublicRouteTable
+
+  VPC2IPv4SubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref VPC2IPv4Subnet
+      RouteTableId: !Ref VPC2IPv4SubnetRouteTable1
+
+  VPC2DualStackSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref VPC2DualStackSubnet
+      RouteTableId: !Ref VPC2DualStackSubnetRouteTable2
+
+  # ---------- Routes ----------
+  # VPC1 Public Routes
+  VPC1PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPC1IGWAttachment
+    Properties:
+      RouteTableId: !Ref VPC1PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref VPC1IGW
+
+  VPC1PublicDefaultIPv6Route:
+    Type: AWS::EC2::Route
+    DependsOn: VPC1IGWAttachment
+    Properties:
+      RouteTableId: !Ref VPC1PublicRouteTable
+      DestinationIpv6CidrBlock: ::/0
+      GatewayId: !Ref VPC1IGW
+
+  # VPC1 Private Routes
+  VPC1PrivateDefaultRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref VPC1IPv4SubnetRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref VPC1NATGW1
+
+  VPC1PrivateDefaultRoute2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref VPC1IPv6SubnetRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref VPC1NATGW2
+
+  VPC1PrivateDefaultRoute3:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref VPC1IPv6SubnetRouteTable2
+      DestinationIpv6CidrBlock: 64:ff9b::/96
+      NatGatewayId: !Ref VPC1NATGW2
+
+  VPC1PrivateDefaultIPv6Route1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref VPC1IPv4SubnetRouteTable1
+      DestinationIpv6CidrBlock: ::/0
+      EgressOnlyInternetGatewayId: !Ref VPC1EIGW
+
+  VPC1PrivateDefaultIPv6Route2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref VPC1IPv6SubnetRouteTable2
+      DestinationIpv6CidrBlock: ::/0
+      EgressOnlyInternetGatewayId: !Ref VPC1EIGW
+
+  # VPC2 Public Routes
+  VPC2PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPC2IGWAttachment
+    Properties:
+      RouteTableId: !Ref VPC2PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref VPC2IGW
+
+  VPC2PublicDefaultIPv6Route:
+    Type: AWS::EC2::Route
+    DependsOn: VPC2IGWAttachment
+    Properties:
+      RouteTableId: !Ref VPC2PublicRouteTable
+      DestinationIpv6CidrBlock: ::/0
+      GatewayId: !Ref VPC2IGW
+
+  # VPC2 Private Routes
+  VPC2PrivateDefaultRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref VPC2IPv4SubnetRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref VPC2NATGW1
+
+  VPC2PrivateDefaultRoute2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref VPC2DualStackSubnetRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref VPC2NATGW2
+
+  VPC2PrivateDefaultRoute3:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref VPC2DualStackSubnetRouteTable2
+      DestinationIpv6CidrBlock: 64:ff9b::/96
+      NatGatewayId: !Ref VPC2NATGW2
+
+  VPC2PrivateDefaultIPv6Route1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref VPC2IPv4SubnetRouteTable1
+      DestinationIpv6CidrBlock: ::/0
+      EgressOnlyInternetGatewayId: !Ref VPC2EIGW
+
+  VPC2PrivateDefaultIPv6Route2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref VPC2DualStackSubnetRouteTable2
+      DestinationIpv6CidrBlock: ::/0
+      EgressOnlyInternetGatewayId: !Ref VPC2EIGW
+
+  # ---------- VPC Endpoints ----------
+  VPC1SSMEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssm
+      VpcId: !Ref VPC1
+      SubnetIds:
+        - !Ref VPC1EndpointsSubnet1
+        - !Ref VPC1EndpointsSubnet2
+      SecurityGroupIds:
+        - !Ref VPC1EndpointsSecurityGroup
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      Tags:
+        - Key: Name
+          Value: VPC1-SSM-Endpoint
+
+  VPC1SSMMessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssmmessages
+      VpcId: !Ref VPC1
+      SubnetIds:
+        - !Ref VPC1EndpointsSubnet1
+        - !Ref VPC1EndpointsSubnet2
+      SecurityGroupIds:
+        - !Ref VPC1EndpointsSecurityGroup
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      Tags:
+        - Key: Name
+          Value: VPC1-SSMMessages-Endpoint
+
+  VPC1EC2MessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ec2messages
+      VpcId: !Ref VPC1
+      SubnetIds:
+        - !Ref VPC1EndpointsSubnet1
+        - !Ref VPC1EndpointsSubnet2
+      SecurityGroupIds:
+        - !Ref VPC1EndpointsSecurityGroup
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      Tags:
+        - Key: Name
+          Value: VPC1-EC2Messages-Endpoint
+
+  VPC2SSMEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssm
+      VpcId: !Ref VPC2
+      SubnetIds:
+        - !Ref VPC2EndpointsSubnet1
+        - !Ref VPC2EndpointsSubnet2
+      SecurityGroupIds:
+        - !Ref VPC2EndpointsSecurityGroup
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      Tags:
+        - Key: Name
+          Value: VPC2-SSM-Endpoint
+
+  VPC2SSMMessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssmmessages
+      VpcId: !Ref VPC2
+      SubnetIds:
+        - !Ref VPC2EndpointsSubnet1
+        - !Ref VPC2EndpointsSubnet2
+      SecurityGroupIds:
+        - !Ref VPC2EndpointsSecurityGroup
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      Tags:
+        - Key: Name
+          Value: VPC2-SSMMessages-Endpoint
+   
+  VPC2EC2MessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ec2messages
+      VpcId: !Ref VPC2
+      SubnetIds:
+        - !Ref VPC2EndpointsSubnet1
+        - !Ref VPC2EndpointsSubnet2
+      SecurityGroupIds:
+        - !Ref VPC2EndpointsSecurityGroup
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      Tags:
+        - Key: Name
+          Value: VPC2-EC2Messages-Endpoint
+
+  # ---------- IAM Roles ----------
+  EC2SSMIAMRoleWorkloads:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Path: /
+      Tags:
+        - Key: Name
+          Value: EC2-SSM-Role
+
+  EC2SSMInstanceProfileWorkloads:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref EC2SSMIAMRoleWorkloads
+
+  # ---------- EC2 Instances ----------
+  VPC1IPv4Instance:
+    Type: AWS::EC2::Instance
+    DependsOn: 
+      - VPC1SSMEndpoint
+      - VPC1SSMMessagesEndpoint
+      - VPC1EC2MessagesEndpoint
+    Properties:
+      InstanceType: t3.micro
+      IamInstanceProfile: !Ref EC2SSMInstanceProfileWorkloads
+      ImageId: !Ref LatestAmiId
+      SecurityGroupIds:
+        - !Ref VPC1InstanceSecurityGroup
+      SubnetId: !Ref VPC1IPv4Subnet
+      UserData: 
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y httpd
+          systemctl start httpd
+          systemctl enable httpd
+          echo "Hello from Application-1's version-1. This instance is deployed in an IPv4 only subnet." > /var/www/html/index.html
+      Tags:
+        - Key: Name
+          Value: VPC1-IPv4-Instance
+
+  VPC1IPv6Instance:
+    Type: AWS::EC2::Instance
+    DependsOn: 
+      - VPC1SSMEndpoint
+      - VPC1SSMMessagesEndpoint
+      - VPC1EC2MessagesEndpoint
+    Properties:
+      InstanceType: t3.micro
+      IamInstanceProfile: !Ref EC2SSMInstanceProfileWorkloads
+      ImageId: !Ref LatestAmiId
+      SecurityGroupIds:
+        - !Ref VPC1InstanceSecurityGroup
+      SubnetId: !Ref VPC1IPv6Subnet
+      UserData: 
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y httpd
+          systemctl start httpd
+          systemctl enable httpd
+          echo "Hello from Application-1's version-2. This instance is deployed in an IPv6 only subnet." > /var/www/html/index.html
+      Tags:
+        - Key: Name
+          Value: VPC1-IPv6-Instance
+
+  VPC2IPv4Instance:
+    Type: AWS::EC2::Instance
+    DependsOn: 
+      - VPC2SSMEndpoint
+      - VPC2SSMMessagesEndpoint
+      - VPC2EC2MessagesEndpoint
+    Properties:
+      InstanceType: t3.micro
+      IamInstanceProfile: !Ref EC2SSMInstanceProfileWorkloads
+      ImageId: !Ref LatestAmiId
+      SecurityGroupIds:
+        - !Ref VPC2InstanceSecurityGroup
+      SubnetId: !Ref VPC2IPv4Subnet
+      UserData: 
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y httpd
+          systemctl start httpd
+          systemctl enable httpd
+          echo "Hello from Application-2's version-1. This instance is deployed in an IPv4 only subnet." > /var/www/html/index.html
+      Tags:
+        - Key: Name
+          Value: VPC2-IPv4-Instance
+
+  VPC2DualStackInstance:
+    Type: AWS::EC2::Instance
+    DependsOn: 
+      - VPC2SSMEndpoint
+      - VPC2SSMMessagesEndpoint
+      - VPC2EC2MessagesEndpoint
+    Properties:
+      InstanceType: t3.micro
+      IamInstanceProfile: !Ref EC2SSMInstanceProfileWorkloads
+      ImageId: !Ref LatestAmiId
+      SecurityGroupIds:
+        - !Ref VPC2InstanceSecurityGroup
+      SubnetId: !Ref VPC2DualStackSubnet
+      UserData: 
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y httpd
+          systemctl start httpd
+          systemctl enable httpd
+          echo "Hello from Application-2's version-2. This instance is deployed in a dual stack subnet." > /var/www/html/index.html
+      Tags:
+        - Key: Name
+          Value: VPC2-Dual-Stack-Instance
+
+  # ---------- Lambda Resources ----------
+  LambdaBasicExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: CustomLambdaEC2DescribePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeNetworkInterfaces
+                Resource: '*'
+      Tags:
+        - Key: Name
+          Value: IPv6-Lambda-Role
+
+  CustomFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.lambda_handler
+      Description: "Retrieves IPv6 address of EC2 instance"
+      Timeout: 30
+      MemorySize: 128
+      Role: !GetAtt LambdaBasicExecutionRole.Arn
+      Runtime: python3.9
+      Code:
+        ZipFile: |
+          import json
+          import logging
+          import cfnresponse
+          import boto3
+          
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def lambda_handler(event, context):
+              logger.info('Event: {}'.format(json.dumps(event)))
+              try:
+                  responseData = {}
+                  if event['RequestType'] == 'Delete':
+                      logger.info('Delete operation')
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      return
+                  
+                  if event['RequestType'] in ["Create", "Update"]:
+                      ResourceRef = event['ResourceProperties']['ResourceRef']
+                      ec2 = boto3.client('ec2')
+                      response = ec2.describe_network_interfaces(
+                          Filters=[{'Name': 'attachment.instance-id', 'Values': [ResourceRef]}]
+                      )
+                      
+                      if response['NetworkInterfaces']:
+                          ipv6_addresses = response['NetworkInterfaces'][0].get('Ipv6Addresses', [])
+                          if ipv6_addresses:
+                              responseData['Ipv6Address'] = ipv6_addresses[0]['Ipv6Address']
+                              logger.info(f"Retrieved IPv6 address: {responseData['Ipv6Address']}")
+                              cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+                              return
+                      
+                      raise Exception("No IPv6 address found")
+                  
+                  logger.info('Unexpected RequestType!')
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+              
+              except Exception as err:
+                  logger.error(str(err))
+                  responseData = {"Error": str(err)}
+                  cfnresponse.send(event, context, cfnresponse.FAILED, responseData)
+
+  CustomIpv6Resource:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !GetAtt CustomFunction.Arn
+      ResourceRef: !Ref VPC1IPv6Instance
+
+  # ---------- VPC Lattice Resources ----------
+  ServiceNetwork:
+    Type: AWS::VpcLattice::ServiceNetwork
+    Properties:
+      Name: lattice-service-network
+      AuthType: AWS_IAM
+      Tags:
+        - Key: Name
+          Value: VPC-Lattice-Service-Network
+
+  ServiceNetworkAuthPolicy:
+    Type: AWS::VpcLattice::AuthPolicy
+    Properties:
+      ResourceIdentifier: !Ref ServiceNetwork
+      Policy:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: '*'
+            Resource: '*'
+
+  LatticeApp1SNAssociation:
+    Type: AWS::VpcLattice::ServiceNetworkVpcAssociation
+    Properties:
+      SecurityGroupIds:
+        - !Ref VPC1LatticeSecurityGroup
+      ServiceNetworkIdentifier: !Ref ServiceNetwork
+      VpcIdentifier: !Ref VPC1
+
+  LatticeApp2SNAssociation:
+    Type: AWS::VpcLattice::ServiceNetworkVpcAssociation
+    Properties:
+      SecurityGroupIds:
+        - !Ref VPC2LatticeSecurityGroup
+      ServiceNetworkIdentifier: !Ref ServiceNetwork
+      VpcIdentifier: !Ref VPC2
+
+  App1ServiceNetworkAssociation:
+    Type: AWS::VpcLattice::ServiceNetworkServiceAssociation
+    Properties:
+      ServiceNetworkIdentifier: !Ref ServiceNetwork
+      ServiceIdentifier: !Ref App1
+
+  App2ServiceNetworkAssociation:
+    Type: AWS::VpcLattice::ServiceNetworkServiceAssociation
+    Properties:
+      ServiceNetworkIdentifier: !Ref ServiceNetwork
+      ServiceIdentifier: !Ref App2
+
+
+  App1IPv4TargetGroup:
+    Type: AWS::VpcLattice::TargetGroup
+    DeletionPolicy: Delete
+    Properties:
+      Name: app-1-ipv4-targets
+      Type: INSTANCE
+      Config:
+        Protocol: HTTP
+        Port: 80
+        ProtocolVersion: HTTP1
+        VpcIdentifier: !Ref VPC1
+        HealthCheck:
+          Enabled: false
+      Targets:
+        - Id: !Ref VPC1IPv4Instance
+          Port: 80
+
+  App2IPv4TargetGroup:
+    Type: AWS::VpcLattice::TargetGroup
+    DeletionPolicy: Delete
+    Properties:
+      Name: app-2-ipv4-targets
+      Type: INSTANCE
+      Config:
+        Protocol: HTTP
+        Port: 80
+        ProtocolVersion: HTTP1
+        VpcIdentifier: !Ref VPC2
+        HealthCheck:
+          Enabled: false
+      Targets:
+        - Id: !Ref VPC2IPv4Instance
+          Port: 80
+
+  App1IPv6TargetGroup:
+    Type: AWS::VpcLattice::TargetGroup
+    DeletionPolicy: Delete
+    Properties:
+      Name: app-1-ipv6-targets
+      Type: IP
+      Config:
+        Protocol: HTTP
+        Port: 80
+        ProtocolVersion: HTTP1
+        VpcIdentifier: !Ref VPC1
+        IpAddressType: "IPV6"
+        HealthCheck:
+          Enabled: false
+      Targets:
+        - Id: !GetAtt CustomIpv6Resource.Ipv6Address
+          Port: 80
+
+  App2IPv6TargetGroup:
+    Type: AWS::VpcLattice::TargetGroup
+    DeletionPolicy: Delete
+    Properties:
+      Name: app-2-dual-stack-targets
+      Type: INSTANCE
+      Config:
+        Protocol: HTTP
+        Port: 80
+        ProtocolVersion: HTTP1
+        VpcIdentifier: !Ref VPC2
+        HealthCheck:
+          Enabled: false
+      Targets:
+        - Id: !Ref VPC2DualStackInstance
+          Port: 80
+
+  App1:
+    Type: AWS::VpcLattice::Service
+    Properties:
+      Name: app-1
+      AuthType: NONE
+
+  App2:
+    Type: AWS::VpcLattice::Service
+    Properties:
+      Name: app-2
+      AuthType: NONE
+  
+  App1AccessLogSubscription:
+    Type: AWS::VpcLattice::AccessLogSubscription
+    Properties:
+      ResourceIdentifier: !Ref App1
+      DestinationArn: !GetAtt App1ServiceLogGroup.Arn
+
+  App2AccessLogSubscription:
+    Type: AWS::VpcLattice::AccessLogSubscription
+    Properties:
+      ResourceIdentifier: !Ref App2
+      DestinationArn: !GetAtt App2ServiceLogGroup.Arn
+  
+  App1Listener:
+    Type: AWS::VpcLattice::Listener
+    DependsOn:
+      - App1IPv4TargetGroup
+      - App1IPv6TargetGroup
+    Properties:
+      ServiceIdentifier: !Ref App1
+      Protocol: HTTP
+      Port: 80
+      DefaultAction:
+        Forward:
+          TargetGroups:
+            - TargetGroupIdentifier: !Ref App1IPv4TargetGroup
+              Weight: 100
+
+  App2Listener:
+    Type: AWS::VpcLattice::Listener
+    DependsOn:
+    - App2IPv4TargetGroup
+    - App2IPv6TargetGroup
+    Properties:
+      ServiceIdentifier: !Ref App2
+      Protocol: HTTP
+      Port: 80
+      DefaultAction:
+        Forward:
+          TargetGroups:
+            - TargetGroupIdentifier: !Ref App2IPv4TargetGroup
+              Weight: 100
+  
+  App1AuthPolicy:
+    Type: AWS::VpcLattice::AuthPolicy
+    Properties:
+      ResourceIdentifier: !Ref App1
+      Policy:
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: '*'
+            Resource: '*'
+
+  App2AuthPolicy:
+    Type: AWS::VpcLattice::AuthPolicy
+    Properties:
+      ResourceIdentifier: !Ref App2
+      Policy:
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: '*'
+            Resource: '*'
+
+  # ---------- Log Groups ----------
+  VPCFlowLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: "/vpc/VPC-Flow-Logs"    # Added this line
+      RetentionInDays: 30
+      Tags:
+        - Key: Name
+          Value: VPC-Flow-Logs
+
+  App1ServiceLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: "/aws/vpc-lattice/lattice-app-1-lg"    # Added this line
+      RetentionInDays: 30
+      Tags:
+        - Key: Name
+          Value: lattice-app-1-lg
+
+  App2ServiceLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: "/aws/vpc-lattice/lattice-app-2-lg"    # Added this line
+      RetentionInDays: 30
+      Tags:
+        - Key: Name
+          Value: lattice-app-2-lg
+
+  LatticeServiceLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: "/aws/vpc-lattice/VPC-Lattice-Service-Logs"    # Added this line
+      RetentionInDays: 30
+      Tags:
+        - Key: Name
+          Value: VPC-Lattice-Service-Logs
+
+
+Outputs:
+  VPCInformation:
+    Description: VPC Information
+    Value: !Sub |
+      VPC1:
+        ID: ${VPC1}
+        CIDR: 10.1.0.0/16
+        IPv6: ${VPC1IPv6CIDR}
+      VPC2:
+        ID: ${VPC2}
+        CIDR: 10.2.0.0/16
+        IPv6: ${VPC2IPv6CIDR}
+
+  SubnetInformation:
+    Description: Subnet Information
+    Value: !Sub |
+      VPC1 Subnets:
+        Public AZ1: ${VPC1PublicSubnet1}
+        Public AZ2: ${VPC1PublicSubnet2}
+        Private AZ1: ${VPC1IPv4Subnet}
+        Private AZ2: ${VPC1IPv6Subnet}
+      VPC2 Subnets:
+        Public AZ1: ${VPC2PublicSubnet1}
+        Public AZ2: ${VPC2PublicSubnet2}
+        Private AZ1: ${VPC2IPv4Subnet}
+        Private AZ2: ${VPC2DualStackSubnet}
+
+  NetworkingResources:
+    Description: Networking Resources
+    Value: !Sub |
+      NAT Gateways:
+        VPC1 AZ1: ${VPC1NATGW1}
+        VPC1 AZ2: ${VPC1NATGW2}
+        VPC2 AZ1: ${VPC2NATGW1}
+        VPC2 AZ2: ${VPC2NATGW2}
+      Route Tables:
+        VPC1 Public: ${VPC1PublicRouteTable}
+        VPC1 Private AZ1: ${VPC1IPv4SubnetRouteTable1}
+        VPC1 Private AZ2: ${VPC1IPv6SubnetRouteTable2}
+        VPC2 Public: ${VPC2PublicRouteTable}
+        VPC2 Private AZ1: ${VPC2IPv4SubnetRouteTable1}
+        VPC2 Private AZ2: ${VPC2DualStackSubnetRouteTable2}
+
+  SecurityGroups:
+    Description: Security Group Information
+    Value: !Sub |
+      VPC1:
+        Instance SG: ${VPC1InstanceSecurityGroup}
+        Endpoints SG: ${VPC1EndpointsSecurityGroup}
+        Lattice SG: ${VPC1LatticeSecurityGroup}
+      VPC2:
+        Instance SG: ${VPC2InstanceSecurityGroup}
+        Endpoints SG: ${VPC2EndpointsSecurityGroup}
+        Lattice SG: ${VPC2LatticeSecurityGroup}
+
+  EC2Instances:
+    Description: EC2 Instance Information
+    Value: !Sub |
+      VPC1:
+        IPv4 Instance:
+          ID: ${VPC1IPv4Instance}
+          Private IP: ${VPC1IPv4Instance.PrivateIp}
+        IPv6 Instance:
+          ID: ${VPC1IPv6Instance}
+          IPv6: ${CustomIpv6Resource.Ipv6Address}
+      VPC2:
+        IPv4 Instance:
+          ID: ${VPC2IPv4Instance}
+          Private IP: ${VPC2IPv4Instance.PrivateIp}
+        Dual Stack Instance:
+          ID: ${VPC2DualStackInstance}
+          Private IP: ${VPC2DualStackInstance.PrivateIp}
+
+  VPCEndpoints:
+    Description: VPC Endpoint Information
+    Value: !Sub |
+      VPC1:
+        SSM: ${VPC1SSMEndpoint}
+        SSMMessages: ${VPC1SSMMessagesEndpoint}
+        EC2Messages: ${VPC1EC2MessagesEndpoint}
+      VPC2:
+        SSM: ${VPC2SSMEndpoint}
+        SSMMessages: ${VPC2SSMMessagesEndpoint}
+        EC2Messages: ${VPC2EC2MessagesEndpoint}
+
+  LatticeResources:
+    Description: VPC Lattice Resource Information
+    Value: !Sub |
+      Service Network: ${ServiceNetwork}
+      Services:
+        Service 1: ${App1}
+        Service 2: ${App2}
+      VPC Associations:
+        VPC1: ${LatticeApp1SNAssociation}
+        VPC2: ${LatticeApp2SNAssociation}
+
+  SSMConnectCommands:
+    Description: SSM Session Manager Connection Commands
+    Value: !Sub |
+      VPC1:
+        IPv4 Instance: aws ssm start-session --target ${VPC1IPv4Instance}
+        IPv6 Instance: aws ssm start-session --target ${VPC1IPv6Instance}
+      VPC2:
+        IPv4 Instance: aws ssm start-session --target ${VPC2IPv4Instance}
+        Dual Stack Instance: aws ssm start-session --target ${VPC2DualStackInstance}
+
+  LogGroups:
+    Description: CloudWatch Log Group Information
+    Value: !Sub |
+      VPC Flow Logs: ${VPCFlowLogsGroup}
+      Lattice Service Logs: ${LatticeServiceLogsGroup}
