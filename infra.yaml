@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: "VPC Infrastructure with IPv4/IPv6 Subnets, NAT Gateways, VPC Lattice, and EC2 Instances"
+Description: "VPC Infrastructure with IPv4/IPv6 Subnets, NAT-Gateways, VPC Lattice, and EC2 Instances"
 
 Parameters:
   LatestAmiId:
