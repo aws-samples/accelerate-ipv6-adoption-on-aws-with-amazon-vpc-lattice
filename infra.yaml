@@ -4,18 +4,17 @@ Description: "VPC Infrastructure with IPv4/IPv6 Subnets, NAT Gateways, VPC Latti
 Parameters:
   LatestAmiId:
     Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
-    Default: "/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2"
-    Description: "Latest Amazon Linux 2 AMI"
+    Default: "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
+    Description: "Latest Amazon Linux 2023 AMI"
 
   VPCLatticeIPv4PrefixList:
     Type: String
-    Default: pl-07cbd8b5e26960eac
-    Description: VPC Lattice IPv4 Prefix List ID for us-east-1
-    
+    Description: "VPC Lattice IPv4 Prefix List for current region"
+
   VPCLatticeIPv6PrefixList:
     Type: String
-    Default: pl-073555187c4e6ccf2
-    Description: VPC Lattice IPv6 Prefix List ID for us-east-1
+    Description: "VPC Lattice IPv6 Prefix List for current region"
+
   
 
 Resources:
@@ -94,6 +93,9 @@ Resources:
 
   # ---------- Security Groups ----------
   VPC1InstanceSecurityGroup:
+    DependsOn: 
+      - LatticeInfoFunction
+      - LatticeInfoResource
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupName: vpc-1-instance-sg
@@ -104,12 +106,12 @@ Resources:
           IpProtocol: tcp
           FromPort: 80
           ToPort: 80
-          SourcePrefixListId: !Ref VPCLatticeIPv4PrefixList
+          SourcePrefixListId: !GetAtt LatticeInfoResource.IPv4PrefixList
         - Description: Allow HTTP from VPC Lattice IPv6
           IpProtocol: tcp
           FromPort: 80
           ToPort: 80
-          SourcePrefixListId: !Ref VPCLatticeIPv6PrefixList
+          SourcePrefixListId: !GetAtt LatticeInfoResource.IPv6PrefixList
       SecurityGroupEgress:
         - IpProtocol: "-1"
           FromPort: -1
@@ -189,6 +191,9 @@ Resources:
           Value: VPC1-Lattice-SG
 
   VPC2InstanceSecurityGroup:
+    DependsOn: 
+      - LatticeInfoFunction
+      - LatticeInfoResource
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupName: vpc-2-instance-sg
@@ -199,12 +204,12 @@ Resources:
           IpProtocol: tcp
           FromPort: 80
           ToPort: 80
-          SourcePrefixListId: !Ref VPCLatticeIPv4PrefixList
+          SourcePrefixListId: !GetAtt LatticeInfoResource.IPv4PrefixList
         - Description: Allow HTTP from VPC Lattice IPv6
           IpProtocol: tcp
           FromPort: 80
           ToPort: 80
-          SourcePrefixListId: !Ref VPCLatticeIPv6PrefixList
+          SourcePrefixListId: !GetAtt LatticeInfoResource.IPv6PrefixList
       SecurityGroupEgress:
         - IpProtocol: "-1"
           FromPort: -1
@@ -282,6 +287,7 @@ Resources:
       Tags:
         - Key: Name
           Value: VPC2-Lattice-SG
+
 
   # ---------- Route Tables ----------
   VPC1PublicRouteTable:
@@ -369,37 +375,42 @@ Resources:
   # VPC1 Public Subnets
   VPC1PublicSubnet1:
     Type: AWS::EC2::Subnet
+    DependsOn: VPC1IPv6CIDR
     Properties:
       VpcId: !Ref VPC1
       AvailabilityZone: !Select [0, !GetAZs ""]
       CidrBlock: 10.1.10.0/24
-      Ipv6CidrBlock:
+      Ipv6CidrBlock: 
         Fn::Select: 
-          - 2
+          - 0
           - Fn::Cidr: 
             - !Select [0, !GetAtt VPC1.Ipv6CidrBlocks]
-            - 6
+            - 256
             - 64
+      AssignIpv6AddressOnCreation: true
       Tags:
         - Key: Name
           Value: VPC1-Public-Subnet-1
 
   VPC1PublicSubnet2:
     Type: AWS::EC2::Subnet
+    DependsOn: VPC1IPv6CIDR
     Properties:
       VpcId: !Ref VPC1
       AvailabilityZone: !Select [1, !GetAZs ""]
       CidrBlock: 10.1.11.0/24
-      Ipv6CidrBlock:
+      Ipv6CidrBlock: 
         Fn::Select: 
-          - 5
+          - 1
           - Fn::Cidr: 
             - !Select [0, !GetAtt VPC1.Ipv6CidrBlocks]
-            - 6
+            - 256
             - 64
+      AssignIpv6AddressOnCreation: true
       Tags:
         - Key: Name
-          Value: VPC1-Public-Subnet-2      
+          Value: VPC1-Public-Subnet-2
+    
 
   # VPC1 Private Subnets
   VPC1IPv4OnlySubnet:
@@ -422,19 +433,20 @@ Resources:
       EnableDns64: true
       Ipv6CidrBlock:
         Fn::Select: 
-          - 0
+          - 2
           - Fn::Cidr: 
             - !Select [0, !GetAtt VPC1.Ipv6CidrBlocks]
-            - 6
+            - 256
             - 64
       AssignIpv6AddressOnCreation: true
       Tags:
         - Key: Name
           Value: VPC1-IPv6-Only-Subnet
 
+
   VPC1EndpointsSubnet1:
-    DependsOn: VPC1IPv6CIDR
     Type: AWS::EC2::Subnet
+    DependsOn: VPC1IPv6CIDR
     Properties:
       VpcId: !Ref VPC1
       AvailabilityZone: !Select [0, !GetAZs ""]
@@ -444,7 +456,7 @@ Resources:
           - 3
           - Fn::Cidr: 
             - !Select [0, !GetAtt VPC1.Ipv6CidrBlocks]
-            - 6
+            - 256
             - 64
       AssignIpv6AddressOnCreation: true
       Tags:
@@ -452,8 +464,8 @@ Resources:
           Value: VPC1-Endpoints-Subnet-1
 
   VPC1EndpointsSubnet2:
-    DependsOn: VPC1IPv6CIDR
     Type: AWS::EC2::Subnet
+    DependsOn: VPC1IPv6CIDR
     Properties:
       VpcId: !Ref VPC1
       AvailabilityZone: !Select [1, !GetAZs ""]
@@ -463,7 +475,7 @@ Resources:
           - 4
           - Fn::Cidr: 
             - !Select [0, !GetAtt VPC1.Ipv6CidrBlocks]
-            - 6
+            - 256
             - 64
       AssignIpv6AddressOnCreation: true
       Tags:
@@ -473,34 +485,38 @@ Resources:
   # VPC2 Public Subnets
   VPC2PublicSubnet1:
     Type: AWS::EC2::Subnet
+    DependsOn: VPC2IPv6CIDR
     Properties:
       VpcId: !Ref VPC2
       AvailabilityZone: !Select [0, !GetAZs ""]
       CidrBlock: 10.2.1.0/24
       Ipv6CidrBlock: 
         Fn::Select: 
-          - 2
+          - 0    # Changed from 2
           - Fn::Cidr: 
             - !Select [0, !GetAtt VPC2.Ipv6CidrBlocks]
-            - 6
+            - 256
             - 64
+      AssignIpv6AddressOnCreation: true
       Tags:
         - Key: Name
           Value: VPC2-Public-Subnet-1
 
   VPC2PublicSubnet2:
     Type: AWS::EC2::Subnet
+    DependsOn: VPC2IPv6CIDR
     Properties:
       VpcId: !Ref VPC2
       AvailabilityZone: !Select [1, !GetAZs ""]
       CidrBlock: 10.2.11.0/24
       Ipv6CidrBlock: 
         Fn::Select: 
-          - 5
+          - 1    # Changed from 5
           - Fn::Cidr: 
             - !Select [0, !GetAtt VPC2.Ipv6CidrBlocks]
-            - 6
+            - 256
             - 64
+      AssignIpv6AddressOnCreation: true
       Tags:
         - Key: Name
           Value: VPC2-Public-Subnet-2
@@ -526,15 +542,15 @@ Resources:
       EnableDns64: true
       Ipv6CidrBlock: 
         Fn::Select: 
-          - 0
+          - 2    # Changed from 0
           - Fn::Cidr: 
             - !Select [0, !GetAtt VPC2.Ipv6CidrBlocks]
-            - 6
+            - 256
             - 64
       AssignIpv6AddressOnCreation: true
       Tags:
         - Key: Name
-          Value: VPC2DualStackSubnet-2
+          Value: VPC2DualStack-Subnet
 
   VPC2EndpointsSubnet1:
     DependsOn:
@@ -549,7 +565,7 @@ Resources:
           - 3
           - Fn::Cidr: 
             - !Select [0, !GetAtt VPC2.Ipv6CidrBlocks]
-            - 6
+            - 256
             - 64
       AssignIpv6AddressOnCreation: true
       Tags:
@@ -569,7 +585,7 @@ Resources:
           - 4
           - Fn::Cidr: 
             - !Select [0, !GetAtt VPC2.Ipv6CidrBlocks]
-            - 6
+            - 256
             - 64
       AssignIpv6AddressOnCreation: true
       Tags:
@@ -1087,6 +1103,87 @@ Resources:
       ServiceToken: !GetAtt CustomFunction.Arn
       ResourceRef: !Ref VPC2DualStackInstance
 
+  LatticeInfoFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt LatticeInfoFunctionRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          
+          def handler(event, context):
+              if event['RequestType'] in ['Create', 'Update']:
+                  ec2 = boto3.client('ec2')
+                  try:
+                      response = ec2.describe_managed_prefix_lists(
+                          Filters=[
+                              {
+                                  'Name': 'prefix-list-name',
+                                  'Values': ['com.amazonaws.*.vpc-lattice']
+                              }
+                          ]
+                      )
+                      print(f"VPC Lattice prefix lists found: {response}")
+                      
+                      ipv4_pl = None
+                      ipv6_pl = None
+                      
+                      for pl in response['PrefixLists']:
+                          if 'ipv6' in pl['PrefixListName']:
+                              ipv6_pl = pl['PrefixListId']
+                          else:
+                              ipv4_pl = pl['PrefixListId']
+                      
+                      if not ipv4_pl or not ipv6_pl:
+                          raise Exception(f"Missing prefix lists. IPv4: {ipv4_pl}, IPv6: {ipv6_pl}")
+                          
+                      responseData = {
+                          'IPv4PrefixList': ipv4_pl,
+                          'IPv6PrefixList': ipv6_pl
+                      }
+                      print(f"Sending response data: {responseData}")
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+                  except Exception as e:
+                      print(f"Error occurred: {str(e)}")
+                      cfnresponse.send(event, context, cfnresponse.FAILED, {"Error": str(e)})
+              else:
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+
+      Runtime: python3.8
+      Timeout: 30
+
+
+  LatticeInfoFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: EC2DescribeManagedPrefixLists
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ec2:DescribeManagedPrefixLists
+                Resource: '*'
+
+
+  LatticeInfoResource:
+    Type: Custom::LatticeInfo
+    DependsOn: LatticeInfoFunction
+    Properties:
+      ServiceToken: !GetAtt LatticeInfoFunction.Arn
+
+
   # ---------- VPC Lattice Resources ----------
   ServiceNetwork:
     Type: AWS::VpcLattice::ServiceNetwork
@@ -1222,15 +1319,20 @@ Resources:
   
   App1AccessLogSubscription:
     Type: AWS::VpcLattice::AccessLogSubscription
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
     Properties:
       ResourceIdentifier: !Ref App1
       DestinationArn: !GetAtt App1ServiceLogGroup.Arn
 
   App2AccessLogSubscription:
     Type: AWS::VpcLattice::AccessLogSubscription
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
     Properties:
       ResourceIdentifier: !Ref App2
       DestinationArn: !GetAtt App2ServiceLogGroup.Arn
+
   
   App1Listener:
     Type: AWS::VpcLattice::Listener
@@ -1250,8 +1352,10 @@ Resources:
   App2Listener:
     Type: AWS::VpcLattice::Listener
     DependsOn:
-    - App2IPv4TargetGroup
-    - App2IPv6TargetGroup
+      - App2IPv4TargetGroup
+      - App2IPv6TargetGroup
+
+
     Properties:
       ServiceIdentifier: !Ref App2
       Protocol: HTTP
@@ -1288,7 +1392,7 @@ Resources:
   VPCFlowLogsGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: "/vpc/VPC-Flow-Logs"    # Added this line
+      LogGroupName: !Sub "/vpc/VPC-Flow-Logs/${AWS::Region}"
       RetentionInDays: 30
       Tags:
         - Key: Name
@@ -1297,7 +1401,7 @@ Resources:
   App1ServiceLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: "/aws/vpc-lattice/lattice-app-1-lg"    # Added this line
+      LogGroupName: !Sub "/aws/vpc-lattice/lattice-app-1-lg/${AWS::Region}"
       RetentionInDays: 30
       Tags:
         - Key: Name
@@ -1306,7 +1410,7 @@ Resources:
   App2ServiceLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: "/aws/vpc-lattice/lattice-app-2-lg"    # Added this line
+      LogGroupName: !Sub "/aws/vpc-lattice/lattice-app-2-lg/${AWS::Region}"
       RetentionInDays: 30
       Tags:
         - Key: Name
@@ -1315,7 +1419,7 @@ Resources:
   LatticeServiceLogsGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: "/aws/vpc-lattice/VPC-Lattice-Service-Logs"    # Added this line
+      LogGroupName: !Sub "/aws/vpc-lattice/VPC-Lattice-Service-Logs/${AWS::Region}"
       RetentionInDays: 30
       Tags:
         - Key: Name
