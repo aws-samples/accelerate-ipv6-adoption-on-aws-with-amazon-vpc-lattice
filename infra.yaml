@@ -492,7 +492,7 @@ Resources:
       CidrBlock: 10.2.1.0/24
       Ipv6CidrBlock: 
         Fn::Select: 
-          - 0    # Changed from 2
+          - 0
           - Fn::Cidr: 
             - !Select [0, !GetAtt VPC2.Ipv6CidrBlocks]
             - 256
@@ -511,7 +511,7 @@ Resources:
       CidrBlock: 10.2.11.0/24
       Ipv6CidrBlock: 
         Fn::Select: 
-          - 1    # Changed from 5
+          - 1
           - Fn::Cidr: 
             - !Select [0, !GetAtt VPC2.Ipv6CidrBlocks]
             - 256
@@ -542,7 +542,7 @@ Resources:
       EnableDns64: true
       Ipv6CidrBlock: 
         Fn::Select: 
-          - 2    # Changed from 0
+          - 2
           - Fn::Cidr: 
             - !Select [0, !GetAtt VPC2.Ipv6CidrBlocks]
             - 256
