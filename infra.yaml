@@ -7,17 +7,229 @@ Parameters:
     Default: "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
     Description: "Latest Amazon Linux 2023 AMI"
 
-  VPCLatticeIPv4PrefixList:
-    Type: String
-    Description: "VPC Lattice IPv4 Prefix List for current region"
-
-  VPCLatticeIPv6PrefixList:
-    Type: String
-    Description: "VPC Lattice IPv6 Prefix List for current region"
-
-  
-
 Resources:
+
+  # ---------- Security Groups ----------
+  VPC1InstanceSecurityGroup:
+    DependsOn: 
+      - LatticeInfoFunction
+      - LatticeInfoResource
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Security group for VPC1 EC2 instances"
+      VpcId: !Ref VPC1
+      SecurityGroupIngress:
+        - Description: Allow HTTP from VPC Lattice IPv4
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourcePrefixListId: !GetAtt LatticeInfoResource.IPv4PrefixList
+        - Description: Allow HTTP from VPC Lattice IPv6
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourcePrefixListId: !GetAtt LatticeInfoResource.IPv6PrefixList
+      SecurityGroupEgress:
+        - Description: Allow HTTPS for downloading webserver httpd
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - Description: Allow HTTPS for downloading webserver httpd
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIpv6: ::/0
+        - Description: Allow HTTP to VPC Lattice IPv4
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          DestinationPrefixListId: !GetAtt LatticeInfoResource.IPv4PrefixList
+        - Description: Allow HTTP to VPC Lattice IPv6
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          DestinationPrefixListId: !GetAtt LatticeInfoResource.IPv6PrefixList
+      Tags:
+        - Key: Name
+          Value: VPC1-Instance-SG
+
+  VPC1EndpointsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn: 
+      - NATGW1PrivateIP
+      - NATGW2PrivateIP
+    Properties:
+      GroupDescription: "Security group for VPC1 VPC endpoints that allows HTTPS traffic from EC2 instances and NAT Gateway private IPs"
+      VpcId: !Ref VPC1
+      SecurityGroupIngress:
+        - Description: Allow HTTPS from instances
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref VPC1InstanceSecurityGroup
+        - Description: Allow HTTPS from VPC1NATGW1
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Sub "${NATGW1PrivateIP.PrivateIp}/32"
+        - Description: Allow HTTPS from VPC1NATGW2
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Sub "${NATGW2PrivateIP.PrivateIp}/32"
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIpv6: ::/0
+      Tags:
+        - Key: Name
+          Value: VPC1-Endpoints-SG
+
+  VPC1LatticeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Security group for VPC1 VPC Lattice service integration that allows HTTP/HTTPS traffic from EC2 instances and enables outbound HTTPS for service communication"
+      VpcId: !Ref VPC1
+      SecurityGroupIngress:
+        - Description: Allow HTTP from instances
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref VPC1InstanceSecurityGroup
+        - Description: Allow HTTPS from instances
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref VPC1InstanceSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIpv6: ::/0
+      Tags:
+        - Key: Name
+          Value: VPC1-Lattice-SG
+
+  VPC2InstanceSecurityGroup:
+    DependsOn: 
+      - LatticeInfoFunction
+      - LatticeInfoResource
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Security group for VPC2 EC2 instances"
+      VpcId: !Ref VPC2
+      SecurityGroupIngress:
+        - Description: Allow HTTP from VPC Lattice IPv4
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourcePrefixListId: !GetAtt LatticeInfoResource.IPv4PrefixList
+        - Description: Allow HTTP from VPC Lattice IPv6
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourcePrefixListId: !GetAtt LatticeInfoResource.IPv6PrefixList
+      SecurityGroupEgress:
+        - Description: Allow HTTP for downloading webserver httpd
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - Description: Allow HTTP for downloading webserver httpd
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIpv6: ::/0        
+        - Description: Allow HTTP to VPC Lattice IPv4PrefixList
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          DestinationPrefixListId: !GetAtt LatticeInfoResource.IPv4PrefixList
+        - Description: Allow HTTP to VPC Lattice IPv6PrefixList
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          DestinationPrefixListId: !GetAtt LatticeInfoResource.IPv6PrefixList
+      Tags:
+        - Key: Name
+          Value: VPC2-Instance-SG
+
+  VPC2EndpointsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn: 
+      - NATGW3PrivateIP
+      - NATGW4PrivateIP
+    Properties:
+      GroupDescription: "Security group for VPC2 VPC endpoints that allows HTTPS traffic from EC2 instances and NAT Gateway private IPs"
+      VpcId: !Ref VPC2
+      SecurityGroupIngress:
+        - Description: Allow HTTPS from instances
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref VPC2InstanceSecurityGroup
+        - Description: Allow HTTPS from VPC2NATGW1
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Sub "${NATGW3PrivateIP.PrivateIp}/32"
+        - Description: Allow HTTPS from VPC2NATGW2
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Sub "${NATGW4PrivateIP.PrivateIp}/32"
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIpv6: ::/0
+      Tags:
+        - Key: Name
+          Value: VPC2-Endpoints-SG
+
+  VPC2LatticeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Security group for VPC2 VPC Lattice service integration that allows HTTP/HTTPS traffic from EC2 instances and enables outbound HTTPS for service communication"
+      VpcId: !Ref VPC2
+      SecurityGroupIngress:
+        - Description: Allow HTTP from instances
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref VPC2InstanceSecurityGroup
+        - Description: Allow HTTPS from instances
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref VPC2InstanceSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIpv6: ::/0
+      Tags:
+        - Key: Name
+          Value: VPC2-Lattice-SG
+
   # ---------- VPCs and IPv6 CIDRs ----------
   VPC1:
     Type: AWS::EC2::VPC
@@ -90,204 +302,6 @@ Resources:
     Type: AWS::EC2::EgressOnlyInternetGateway
     Properties:
       VpcId: !Ref VPC2
-
-  # ---------- Security Groups ----------
-  VPC1InstanceSecurityGroup:
-    DependsOn: 
-      - LatticeInfoFunction
-      - LatticeInfoResource
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupName: vpc-1-instance-sg
-      GroupDescription: Instance Security Group for VPC1
-      VpcId: !Ref VPC1
-      SecurityGroupIngress:
-        - Description: Allow HTTP from VPC Lattice IPv4
-          IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          SourcePrefixListId: !GetAtt LatticeInfoResource.IPv4PrefixList
-        - Description: Allow HTTP from VPC Lattice IPv6
-          IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          SourcePrefixListId: !GetAtt LatticeInfoResource.IPv6PrefixList
-      SecurityGroupEgress:
-        - IpProtocol: "-1"
-          FromPort: -1
-          ToPort: -1
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: "-1"
-          FromPort: -1
-          ToPort: -1
-          CidrIpv6: ::/0
-      Tags:
-        - Key: Name
-          Value: VPC1-Instance-SG
-
-  VPC1EndpointsSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupName: vpc-1-endpoints-sg
-      GroupDescription: Endpoints Security Group for VPC1
-      VpcId: !Ref VPC1
-      SecurityGroupIngress:
-        - Description: Allow HTTPS from instances
-          IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          SourceSecurityGroupId: !Ref VPC1InstanceSecurityGroup
-        - Description: Allow HTTPS from VPC1NATGW1 Subnet CIDR
-          IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          CidrIp: 10.1.10.0/24
-        - Description: Allow HTTPS from VPC1NATGW2 Subnet CIDR
-          IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          CidrIp: 10.1.11.0/24
-      SecurityGroupEgress:
-        - IpProtocol: "-1"
-          FromPort: -1
-          ToPort: -1
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: "-1"
-          FromPort: -1
-          ToPort: -1
-          CidrIpv6: ::/0
-      Tags:
-        - Key: Name
-          Value: VPC1-Endpoints-SG
-
-  VPC1LatticeSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupName: vpc-1-lattice-sg
-      GroupDescription: VPC Lattice Security Group for VPC1
-      VpcId: !Ref VPC1
-      SecurityGroupIngress:
-        - Description: Allow HTTP from instances
-          IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          SourceSecurityGroupId: !Ref VPC1InstanceSecurityGroup
-        - Description: Allow HTTPS from instances
-          IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          SourceSecurityGroupId: !Ref VPC1InstanceSecurityGroup
-      SecurityGroupEgress:
-        - IpProtocol: "-1"
-          FromPort: -1
-          ToPort: -1
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: "-1"
-          FromPort: -1
-          ToPort: -1
-          CidrIpv6: ::/0
-      Tags:
-        - Key: Name
-          Value: VPC1-Lattice-SG
-
-  VPC2InstanceSecurityGroup:
-    DependsOn: 
-      - LatticeInfoFunction
-      - LatticeInfoResource
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupName: vpc-2-instance-sg
-      GroupDescription: Instance Security Group for VPC2
-      VpcId: !Ref VPC2
-      SecurityGroupIngress:
-        - Description: Allow HTTP from VPC Lattice IPv4
-          IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          SourcePrefixListId: !GetAtt LatticeInfoResource.IPv4PrefixList
-        - Description: Allow HTTP from VPC Lattice IPv6
-          IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          SourcePrefixListId: !GetAtt LatticeInfoResource.IPv6PrefixList
-      SecurityGroupEgress:
-        - IpProtocol: "-1"
-          FromPort: -1
-          ToPort: -1
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: "-1"
-          FromPort: -1
-          ToPort: -1
-          CidrIpv6: ::/0
-      Tags:
-        - Key: Name
-          Value: VPC2-Instance-SG
-
-  VPC2EndpointsSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupName: vpc-2-endpoints-sg
-      GroupDescription: Endpoints Security Group for VPC2
-      VpcId: !Ref VPC2
-      SecurityGroupIngress:
-        - Description: Allow HTTPS from instances
-          IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          SourceSecurityGroupId: !Ref VPC2InstanceSecurityGroup
-        - Description: Allow HTTPS from VPC2NATGW1 Subnet CIDR
-          IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          CidrIp: 10.2.1.0/24
-        - Description: Allow HTTPS from VPC2NATGW2 Subnet CIDR
-          IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          CidrIp: 10.2.11.0/24
-      SecurityGroupEgress:
-        - IpProtocol: "-1"
-          FromPort: -1
-          ToPort: -1
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: "-1"
-          FromPort: -1
-          ToPort: -1
-          CidrIpv6: ::/0
-      Tags:
-        - Key: Name
-          Value: VPC2-Endpoints-SG
-
-  VPC2LatticeSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupName: vpc-2-lattice-sg
-      GroupDescription: VPC Lattice Security Group for VPC2
-      VpcId: !Ref VPC2
-      SecurityGroupIngress:
-        - Description: Allow HTTP from instances
-          IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          SourceSecurityGroupId: !Ref VPC2InstanceSecurityGroup
-        - Description: Allow HTTPS from instances
-          IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          SourceSecurityGroupId: !Ref VPC2InstanceSecurityGroup
-      SecurityGroupEgress:
-        - IpProtocol: "-1"
-          FromPort: -1
-          ToPort: -1
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: "-1"
-          FromPort: -1
-          ToPort: -1
-          CidrIpv6: ::/0
-      Tags:
-        - Key: Name
-          Value: VPC2-Lattice-SG
-
 
   # ---------- Route Tables ----------
   VPC1PublicRouteTable:
@@ -595,7 +609,6 @@ Resources:
   # ---------- NAT Gateways ----------
   VPC1NATGW1:
     Type: AWS::EC2::NatGateway
-    DependsOn: VPC1IGWAttachment
     Properties:
       AllocationId: !GetAtt VPC1EIP1.AllocationId
       SubnetId: !Ref VPC1PublicSubnet1
@@ -605,7 +618,6 @@ Resources:
 
   VPC1NATGW2:
     Type: AWS::EC2::NatGateway
-    DependsOn: VPC1IGWAttachment
     Properties:
       AllocationId: !GetAtt VPC1EIP2.AllocationId
       SubnetId: !Ref VPC1PublicSubnet2
@@ -615,7 +627,6 @@ Resources:
 
   VPC2NATGW1:
     Type: AWS::EC2::NatGateway
-    DependsOn: VPC2IGWAttachment
     Properties:
       AllocationId: !GetAtt VPC2EIP1.AllocationId
       SubnetId: !Ref VPC2PublicSubnet1
@@ -625,13 +636,13 @@ Resources:
 
   VPC2NATGW2:
     Type: AWS::EC2::NatGateway
-    DependsOn: VPC2IGWAttachment
     Properties:
       AllocationId: !GetAtt VPC2EIP2.AllocationId
       SubnetId: !Ref VPC2PublicSubnet2
       Tags:
         - Key: Name
           Value: VPC2-NATGW-AZ2
+
 
   # ---------- Route Table Associations ----------
   VPC1PublicSubnet1RouteTableAssociation:
@@ -802,9 +813,16 @@ Resources:
         - !Ref VPC1EndpointsSecurityGroup
       VpcEndpointType: Interface
       PrivateDnsEnabled: true
-      Tags:
-        - Key: Name
-          Value: VPC1-SSM-Endpoint
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: '*'
+            Resource: '*'
+            Condition:
+              StringEquals:
+                'aws:PrincipalAccount': !Ref 'AWS::AccountId'
 
   VPC1SSMMessagesEndpoint:
     Type: AWS::EC2::VPCEndpoint
@@ -818,9 +836,16 @@ Resources:
         - !Ref VPC1EndpointsSecurityGroup
       VpcEndpointType: Interface
       PrivateDnsEnabled: true
-      Tags:
-        - Key: Name
-          Value: VPC1-SSMMessages-Endpoint
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: '*'
+            Resource: '*'
+            Condition:
+              StringEquals:
+                'aws:PrincipalAccount': !Ref 'AWS::AccountId'
 
   VPC1EC2MessagesEndpoint:
     Type: AWS::EC2::VPCEndpoint
@@ -834,9 +859,16 @@ Resources:
         - !Ref VPC1EndpointsSecurityGroup
       VpcEndpointType: Interface
       PrivateDnsEnabled: true
-      Tags:
-        - Key: Name
-          Value: VPC1-EC2Messages-Endpoint
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: '*'
+            Resource: '*'
+            Condition:
+              StringEquals:
+                'aws:PrincipalAccount': !Ref 'AWS::AccountId'
 
   VPC2SSMEndpoint:
     Type: AWS::EC2::VPCEndpoint
@@ -850,9 +882,16 @@ Resources:
         - !Ref VPC2EndpointsSecurityGroup
       VpcEndpointType: Interface
       PrivateDnsEnabled: true
-      Tags:
-        - Key: Name
-          Value: VPC2-SSM-Endpoint
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: '*'
+            Resource: '*'
+            Condition:
+              StringEquals:
+                'aws:PrincipalAccount': !Ref 'AWS::AccountId'
 
   VPC2SSMMessagesEndpoint:
     Type: AWS::EC2::VPCEndpoint
@@ -866,9 +905,16 @@ Resources:
         - !Ref VPC2EndpointsSecurityGroup
       VpcEndpointType: Interface
       PrivateDnsEnabled: true
-      Tags:
-        - Key: Name
-          Value: VPC2-SSMMessages-Endpoint
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: '*'
+            Resource: '*'
+            Condition:
+              StringEquals:
+                'aws:PrincipalAccount': !Ref 'AWS::AccountId'
    
   VPC2EC2MessagesEndpoint:
     Type: AWS::EC2::VPCEndpoint
@@ -882,9 +928,16 @@ Resources:
         - !Ref VPC2EndpointsSecurityGroup
       VpcEndpointType: Interface
       PrivateDnsEnabled: true
-      Tags:
-        - Key: Name
-          Value: VPC2-EC2Messages-Endpoint
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: '*'
+            Resource: '*'
+            Condition:
+              StringEquals:
+                'aws:PrincipalAccount': !Ref 'AWS::AccountId'
 
   # ---------- IAM Roles ----------
   EC2SSMIAMRoleWorkloads:
@@ -900,9 +953,6 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
       Path: /
-      Tags:
-        - Key: Name
-          Value: EC2-SSM-Role
 
   EC2SSMInstanceProfileWorkloads:
     Type: AWS::IAM::InstanceProfile
@@ -910,6 +960,29 @@ Resources:
       Path: /
       Roles:
         - !Ref EC2SSMIAMRoleWorkloads
+
+
+  EC2DescribeManagedPrefixListsPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: "Policy for EC2 describe managed prefix lists"
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: ec2:DescribeManagedPrefixLists
+            Resource: '*'
+
+  CustomEC2DescribePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: "Policy for EC2 describe actions needed by Lambda functions"
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: ec2:Describe*
+            Resource: '*'
 
   # ---------- EC2 Instances ----------
   VPC1IPv4Instance:
@@ -920,6 +993,8 @@ Resources:
       - VPC1EC2MessagesEndpoint
     Properties:
       InstanceType: t3.micro
+      EbsOptimized: true
+      Monitoring: true
       IamInstanceProfile: !Ref EC2SSMInstanceProfileWorkloads
       ImageId: !Ref LatestAmiId
       SecurityGroupIds:
@@ -945,6 +1020,8 @@ Resources:
       - VPC1EC2MessagesEndpoint
     Properties:
       InstanceType: t3.micro
+      EbsOptimized: true
+      Monitoring: true
       IamInstanceProfile: !Ref EC2SSMInstanceProfileWorkloads
       ImageId: !Ref LatestAmiId
       SecurityGroupIds:
@@ -970,6 +1047,8 @@ Resources:
       - VPC2EC2MessagesEndpoint
     Properties:
       InstanceType: t3.micro
+      EbsOptimized: true
+      Monitoring: true
       IamInstanceProfile: !Ref EC2SSMInstanceProfileWorkloads
       ImageId: !Ref LatestAmiId
       SecurityGroupIds:
@@ -995,6 +1074,8 @@ Resources:
       - VPC2EC2MessagesEndpoint
     Properties:
       InstanceType: t3.micro
+      EbsOptimized: true
+      Monitoring: true
       IamInstanceProfile: !Ref EC2SSMInstanceProfileWorkloads
       ImageId: !Ref LatestAmiId
       SecurityGroupIds:
@@ -1017,23 +1098,16 @@ Resources:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
+        Version: '2012-10-17'
         Statement:
-        - Effect: Allow
-          Principal:
-            Service: lambda.amazonaws.com
-          Action: sts:AssumeRole
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
       Path: /
       ManagedPolicyArns:
         - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-      Policies:
-        - PolicyName: CustomLambdaEC2DescribePolicy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - ec2:DescribeNetworkInterfaces
-                Resource: '*'
+        - !Ref CustomEC2DescribePolicy
       Tags:
         - Key: Name
           Value: IPv6-Lambda-Role
@@ -1041,12 +1115,17 @@ Resources:
   CustomFunction:
     Type: AWS::Lambda::Function
     Properties:
+      FunctionName: !Sub "CustomFunction-${AWS::StackName}"
       Handler: index.lambda_handler
+      ReservedConcurrentExecutions: 5
       Description: "Retrieves IPv6 address of EC2 instance"
       Timeout: 30
       MemorySize: 128
       Role: !GetAtt LambdaBasicExecutionRole.Arn
       Runtime: python3.11
+      Environment:
+        Variables:
+          LOG_LEVEL: INFO
       Code:
         ZipFile: |
           import json
@@ -1058,36 +1137,49 @@ Resources:
           logger.setLevel(logging.INFO)
 
           def lambda_handler(event, context):
-              logger.info('Event: {}'.format(json.dumps(event)))
+              logger.info(f'Event received: {json.dumps(event, default=str)}')
+              logger.info(f'Context: {context}')
               try:
                   responseData = {}
                   if event['RequestType'] == 'Delete':
-                      logger.info('Delete operation')
+                      logger.info('Processing Delete operation')
                       cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
                       return
                   
                   if event['RequestType'] in ["Create", "Update"]:
                       ResourceRef = event['ResourceProperties']['ResourceRef']
+                      logger.info(f'Processing {event["RequestType"]} for instance: {ResourceRef}')
+                      
                       ec2 = boto3.client('ec2')
+                      logger.info('Calling describe_network_interfaces')
                       response = ec2.describe_network_interfaces(
                           Filters=[{'Name': 'attachment.instance-id', 'Values': [ResourceRef]}]
                       )
+                      logger.info(f'EC2 response: {json.dumps(response, default=str)}')
                       
                       if response['NetworkInterfaces']:
-                          ipv6_addresses = response['NetworkInterfaces'][0].get('Ipv6Addresses', [])
+                          eni = response['NetworkInterfaces'][0]
+                          logger.info(f'Found ENI: {eni.get("NetworkInterfaceId")}')
+                          ipv6_addresses = eni.get('Ipv6Addresses', [])
+                          logger.info(f'IPv6 addresses found: {ipv6_addresses}')
+                          
                           if ipv6_addresses:
                               responseData['Ipv6Address'] = ipv6_addresses[0]['Ipv6Address']
-                              logger.info(f"Retrieved IPv6 address: {responseData['Ipv6Address']}")
+                              logger.info(f"Success - IPv6 address: {responseData['Ipv6Address']}")
                               cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
                               return
+                          else:
+                              logger.warning('No IPv6 addresses found on ENI')
+                      else:
+                          logger.warning('No network interfaces found for instance')
                       
-                      raise Exception("No IPv6 address found")
+                      raise Exception(f"No IPv6 address found for instance {ResourceRef}")
                   
-                  logger.info('Unexpected RequestType!')
+                  logger.warning(f'Unexpected RequestType: {event.get("RequestType")}')
                   cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
               
               except Exception as err:
-                  logger.error(str(err))
+                  logger.error(f'Error in lambda_handler: {str(err)}', exc_info=True)
                   responseData = {"Error": str(err)}
                   cfnresponse.send(event, context, cfnresponse.FAILED, responseData)
 
@@ -1103,58 +1195,6 @@ Resources:
       ServiceToken: !GetAtt CustomFunction.Arn
       ResourceRef: !Ref VPC2DualStackInstance
 
-  LatticeInfoFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      Handler: index.handler
-      Role: !GetAtt LatticeInfoFunctionRole.Arn
-      Code:
-        ZipFile: |
-          import boto3
-          import cfnresponse
-          
-          def handler(event, context):
-              if event['RequestType'] in ['Create', 'Update']:
-                  ec2 = boto3.client('ec2')
-                  try:
-                      response = ec2.describe_managed_prefix_lists(
-                          Filters=[
-                              {
-                                  'Name': 'prefix-list-name',
-                                  'Values': ['com.amazonaws.*.vpc-lattice']
-                              }
-                          ]
-                      )
-                      print(f"VPC Lattice prefix lists found: {response}")
-                      
-                      ipv4_pl = None
-                      ipv6_pl = None
-                      
-                      for pl in response['PrefixLists']:
-                          if 'ipv6' in pl['PrefixListName']:
-                              ipv6_pl = pl['PrefixListId']
-                          else:
-                              ipv4_pl = pl['PrefixListId']
-                      
-                      if not ipv4_pl or not ipv6_pl:
-                          raise Exception(f"Missing prefix lists. IPv4: {ipv4_pl}, IPv6: {ipv6_pl}")
-                          
-                      responseData = {
-                          'IPv4PrefixList': ipv4_pl,
-                          'IPv6PrefixList': ipv6_pl
-                      }
-                      print(f"Sending response data: {responseData}")
-                      cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
-                  except Exception as e:
-                      print(f"Error occurred: {str(e)}")
-                      cfnresponse.send(event, context, cfnresponse.FAILED, {"Error": str(e)})
-              else:
-                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
-
-      Runtime: python3.8
-      Timeout: 30
-
-
   LatticeInfoFunctionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -1167,15 +1207,85 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-      Policies:
-        - PolicyName: EC2DescribeManagedPrefixLists
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action: ec2:DescribeManagedPrefixLists
-                Resource: '*'
+        - !Ref EC2DescribeManagedPrefixListsPolicy
 
+  LatticeInfoFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: LatticeInfoFunctionLogGroup
+    Properties:
+      FunctionName: !Sub "LatticeInfoFunction-${AWS::StackName}"
+      Handler: index.handler
+      ReservedConcurrentExecutions: 5
+      Role: !GetAtt LatticeInfoFunctionRole.Arn
+      Runtime: python3.11
+      Timeout: 30
+      Environment:
+        Variables:
+          LOG_LEVEL: INFO
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import json
+          import logging
+          
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          
+          def handler(event, context):
+              logger.info(f'Event received: {json.dumps(event, default=str)}')
+              logger.info(f'AWS Region: {boto3.Session().region_name}')
+              
+              if event['RequestType'] in ['Create', 'Update']:
+                  logger.info(f'Processing {event["RequestType"]} request')
+                  ec2 = boto3.client('ec2')
+                  try:
+                      logger.info('Calling describe_managed_prefix_lists for VPC Lattice')
+                      response = ec2.describe_managed_prefix_lists(
+                          Filters=[
+                              {
+                                  'Name': 'prefix-list-name',
+                                  'Values': ['com.amazonaws.*.vpc-lattice']
+                              }
+                          ]
+                      )
+                      logger.info(f"API response: {json.dumps(response, default=str)}")
+                      
+                      prefix_lists = response.get('PrefixLists', [])
+                      logger.info(f"Found {len(prefix_lists)} prefix lists")
+                      
+                      ipv4_pl = None
+                      ipv6_pl = None
+                      
+                      for pl in prefix_lists:
+                          name = pl.get('PrefixListName', '')
+                          pl_id = pl.get('PrefixListId', '')
+                          logger.info(f"Processing prefix list: {name} -> {pl_id}")
+                          
+                          if 'ipv6' in name.lower():
+                              ipv6_pl = pl_id
+                              logger.info(f"Found IPv6 prefix list: {ipv6_pl}")
+                          else:
+                              ipv4_pl = pl_id
+                              logger.info(f"Found IPv4 prefix list: {ipv4_pl}")
+                      
+                      if not ipv4_pl or not ipv6_pl:
+                          error_msg = f"Missing prefix lists. IPv4: {ipv4_pl}, IPv6: {ipv6_pl}. Region may not support VPC Lattice."
+                          logger.error(error_msg)
+                          raise Exception(error_msg)
+                          
+                      responseData = {
+                          'IPv4PrefixList': ipv4_pl,
+                          'IPv6PrefixList': ipv6_pl
+                      }
+                      logger.info(f"Success - sending response: {responseData}")
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+                  except Exception as e:
+                      logger.error(f"Error in handler: {str(e)}", exc_info=True)
+                      cfnresponse.send(event, context, cfnresponse.FAILED, {"Error": str(e)})
+              else:
+                  logger.info(f'Processing {event.get("RequestType", "Unknown")} request - no action needed')
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
 
   LatticeInfoResource:
     Type: Custom::LatticeInfo
@@ -1183,10 +1293,147 @@ Resources:
     Properties:
       ServiceToken: !GetAtt LatticeInfoFunction.Arn
 
+  NATGatewayInfoFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "NATGatewayInfoFunction-${AWS::StackName}"
+      Handler: index.lambda_handler
+      ReservedConcurrentExecutions: 5
+      Role: !GetAtt LambdaBasicExecutionRole.Arn
+      Runtime: python3.11
+      Timeout: 30
+      Environment:
+        Variables:
+          LOG_LEVEL: INFO
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import logging
+          import urllib.request
+          from datetime import datetime
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          class DateTimeEncoder(json.JSONEncoder):
+              def default(self, obj):
+                  if isinstance(obj, datetime):
+                      return obj.isoformat()
+                  return super().default(obj)
+
+          def send_response(event, context, response_status, response_data, physical_resource_id=None, no_echo=False):
+              response_url = event['ResponseURL']
+
+              logger.info(f"ResponseURL: {response_url}")
+
+              response_body = {
+                  'Status': response_status,
+                  'Reason': f"See the details in CloudWatch Log Stream: {context.log_stream_name}",
+                  'PhysicalResourceId': physical_resource_id or context.log_stream_name,
+                  'StackId': event['StackId'],
+                  'RequestId': event['RequestId'],
+                  'LogicalResourceId': event['LogicalResourceId'],
+                  'NoEcho': no_echo,
+                  'Data': response_data
+              }
+
+              json_response_body = json.dumps(response_body, cls=DateTimeEncoder)
+              logger.info(f"Response body: {json_response_body}")
+
+              headers = {
+                  'content-type': '',
+                  'content-length': str(len(json_response_body))
+              }
+
+              try:
+                  req = urllib.request.Request(response_url,
+                                            data=json_response_body.encode('utf-8'),
+                                            headers=headers,
+                                            method='PUT')
+                  response = urllib.request.urlopen(req)
+                  logger.info(f"Status code: {response.getcode()}")
+                  return True
+              except Exception as e:
+                  logger.error(f"send_response failed: {str(e)}")
+                  return False
+
+          def lambda_handler(event, context):
+              logger.info(f"Received event: {json.dumps(event, cls=DateTimeEncoder)}")
+              
+              if event['RequestType'] == 'Delete':
+                  logger.info("Request Type is Delete; sending SUCCESS response")
+                  send_response(event, context, 'SUCCESS', {})
+                  return
+              
+              try:
+                  nat_gateway_id = event['ResourceProperties']['NatGatewayId']
+                  logger.info(f"Looking up NAT Gateway: {nat_gateway_id}")
+                  
+                  ec2 = boto3.client('ec2')
+                  
+                  response = ec2.describe_nat_gateways(NatGatewayIds=[nat_gateway_id])
+                  logger.info(f"NAT Gateway response: {json.dumps(response, cls=DateTimeEncoder)}")
+                  
+                  if not response['NatGateways']:
+                      raise Exception(f"NAT Gateway {nat_gateway_id} not found")
+                  
+                  nat_gateway = response['NatGateways'][0]
+                  
+                  if nat_gateway['State'] != 'available':
+                      raise Exception(f"NAT Gateway {nat_gateway_id} is not available. Current state: {nat_gateway['State']}")
+                  
+                  if not nat_gateway['NatGatewayAddresses']:
+                      raise Exception(f"NAT Gateway {nat_gateway_id} has no addresses")
+                  
+                  private_ip = nat_gateway['NatGatewayAddresses'][0]['PrivateIp']
+                  logger.info(f"Found private IP: {private_ip}")
+                  
+                  send_response(event, context, 'SUCCESS', {'PrivateIp': private_ip})
+                  
+              except Exception as e:
+                  logger.error(f"Error: {str(e)}")
+                  send_response(event, context, 'FAILED', {'Error': str(e)})
+
+
+
+
+
+  NATGW1PrivateIP:
+    Type: Custom::NATGatewayInfo
+    DependsOn: VPC1NATGW1
+    Properties:
+      ServiceToken: !GetAtt NATGatewayInfoFunction.Arn
+      NatGatewayId: !Ref VPC1NATGW1
+
+  NATGW2PrivateIP:
+    Type: Custom::NATGatewayInfo
+    DependsOn: VPC1NATGW2
+    Properties:
+      ServiceToken: !GetAtt NATGatewayInfoFunction.Arn
+      NatGatewayId: !Ref VPC1NATGW2
+
+  NATGW3PrivateIP:
+    Type: Custom::NATGatewayInfo
+    DependsOn: VPC2NATGW1
+    Properties:
+      ServiceToken: !GetAtt NATGatewayInfoFunction.Arn
+      NatGatewayId: !Ref VPC2NATGW1
+
+  NATGW4PrivateIP:
+    Type: Custom::NATGatewayInfo
+    DependsOn: VPC2NATGW2
+    Properties:
+      ServiceToken: !GetAtt NATGatewayInfoFunction.Arn
+      NatGatewayId: !Ref VPC2NATGW2
+
+
+
 
   # ---------- VPC Lattice Resources ----------
   ServiceNetwork:
     Type: AWS::VpcLattice::ServiceNetwork
+    DeletionPolicy: Delete
     Properties:
       Name: ipv6-day-service-network
       AuthType: AWS_IAM
@@ -1196,6 +1443,7 @@ Resources:
 
   ServiceNetworkAuthPolicy:
     Type: AWS::VpcLattice::AuthPolicy
+    DeletionPolicy: Delete
     Properties:
       ResourceIdentifier: !Ref ServiceNetwork
       Policy:
@@ -1307,12 +1555,14 @@ Resources:
 
   App1:
     Type: AWS::VpcLattice::Service
+    DeletionPolicy: Delete
     Properties:
       Name: app-1
       AuthType: NONE
 
   App2:
     Type: AWS::VpcLattice::Service
+    DeletionPolicy: Delete
     Properties:
       Name: app-2
       AuthType: NONE
@@ -1336,6 +1586,7 @@ Resources:
   
   App1Listener:
     Type: AWS::VpcLattice::Listener
+    DeletionPolicy: Delete
     DependsOn:
       - App1IPv4TargetGroup
       - App1IPv6TargetGroup
@@ -1351,11 +1602,10 @@ Resources:
 
   App2Listener:
     Type: AWS::VpcLattice::Listener
+    DeletionPolicy: Delete
     DependsOn:
       - App2IPv4TargetGroup
       - App2IPv6TargetGroup
-
-
     Properties:
       ServiceIdentifier: !Ref App2
       Protocol: HTTP
@@ -1368,6 +1618,7 @@ Resources:
   
   App1AuthPolicy:
     Type: AWS::VpcLattice::AuthPolicy
+    DeletionPolicy: Delete
     Properties:
       ResourceIdentifier: !Ref App1
       Policy:
@@ -1379,6 +1630,7 @@ Resources:
 
   App2AuthPolicy:
     Type: AWS::VpcLattice::AuthPolicy
+    DeletionPolicy: Delete
     Properties:
       ResourceIdentifier: !Ref App2
       Policy:
@@ -1391,39 +1643,80 @@ Resources:
   # ---------- Log Groups ----------
   VPCFlowLogsGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
     Properties:
       LogGroupName: !Sub "/vpc/VPC-Flow-Logs/${AWS::Region}"
-      RetentionInDays: 30
+      RetentionInDays: 3
       Tags:
         - Key: Name
           Value: VPC-Flow-Logs
 
   App1ServiceLogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
     Properties:
       LogGroupName: !Sub "/aws/vpc-lattice/lattice-app-1-lg/${AWS::Region}"
-      RetentionInDays: 30
+      RetentionInDays: 3
       Tags:
         - Key: Name
           Value: lattice-app-1-lg
 
   App2ServiceLogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
     Properties:
       LogGroupName: !Sub "/aws/vpc-lattice/lattice-app-2-lg/${AWS::Region}"
-      RetentionInDays: 30
+      RetentionInDays: 3
       Tags:
         - Key: Name
           Value: lattice-app-2-lg
 
   LatticeServiceLogsGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
     Properties:
       LogGroupName: !Sub "/aws/vpc-lattice/VPC-Lattice-Service-Logs/${AWS::Region}"
-      RetentionInDays: 30
+      RetentionInDays: 3
       Tags:
         - Key: Name
           Value: VPC-Lattice-Service-Logs
+
+  CustomFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/CustomFunction-${AWS::StackName}"
+      RetentionInDays: 3
+      Tags:
+        - Key: Name
+          Value: custom-function-logs
+
+  LatticeInfoFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/LatticeInfoFunction-${AWS::StackName}"
+      RetentionInDays: 3
+      Tags:
+        - Key: Name
+          Value: lattice-info-function-logs
+
+  NATGatewayInfoFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/NATGatewayInfoFunction-${AWS::StackName}"
+      RetentionInDays: 3
+      Tags:
+        - Key: Name
+          Value: natgateway-info-function-logs
 
 
 Outputs:
@@ -1438,6 +1731,16 @@ Outputs:
         ID: ${VPC2}
         CIDR: 10.2.0.0/16
         IPv6: ${VPC2IPv6CIDR}
+
+  NATGatewayIPs:
+    Description: NAT Gateway Private IPs
+    Value: !Sub |
+      VPC1:
+        NATGW1: ${NATGW1PrivateIP.PrivateIp}
+        NATGW2: ${NATGW2PrivateIP.PrivateIp}
+      VPC2:
+        NATGW1: ${NATGW3PrivateIP.PrivateIp}
+        NATGW2: ${NATGW4PrivateIP.PrivateIp}
 
   SubnetInformation:
     Description: Subnet Information
