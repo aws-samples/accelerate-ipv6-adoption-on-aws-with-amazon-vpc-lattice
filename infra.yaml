@@ -1112,6 +1112,8 @@ Resources:
         - Key: Name
           Value: IPv6-Lambda-Role
 
+# DLQ not needed - CloudFormation manages retries
+# Lambda Function performs error handling
   CustomFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -1209,6 +1211,8 @@ Resources:
         - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
         - !Ref EC2DescribeManagedPrefixListsPolicy
 
+# DLQ not needed - CloudFormation manages retries
+# Lambda Function performs error handling
   LatticeInfoFunction:
     Type: AWS::Lambda::Function
     DependsOn: LatticeInfoFunctionLogGroup
@@ -1293,6 +1297,8 @@ Resources:
     Properties:
       ServiceToken: !GetAtt LatticeInfoFunction.Arn
 
+# DLQ not needed - CloudFormation manages retries
+# Lambda Function performs error handling
   NATGatewayInfoFunction:
     Type: AWS::Lambda::Function
     Properties:
