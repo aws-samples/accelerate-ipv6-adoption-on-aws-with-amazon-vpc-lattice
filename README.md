@@ -1,6 +1,7 @@
 ## Accelerate IPv6 adoption on AWS with Amazon VPC Lattice
 
-This repo includes the Cloudformation template that deploys the architecture shown in Figure-1 below
+This repo includes the Cloudformation template that deploys the architecture shown in Figure-1 at this blog:
+https://aws.amazon.com/blogs/networking-and-content-delivery/accelerate-your-ipv6-adoption-on-aws-with-amazon-vpc-lattice/
 
 ## PreRequisites
 The template will deploy VPCs, EC2 instances and Amazon VPC Lattice constructs into your AWS account. Ensure that you have the right IAM credentials. You can issue `aws configure` to check the AWS permissions.
